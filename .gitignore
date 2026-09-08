@@ -1,0 +1,16 @@
+# Private snapshots, including legacy drive directories.
+/snapshots/
+/reports/
+/[A-Z]/
+*.csv
+*.log
+*.local.*
+/snapshot.config.json
+*.html
+!/viewer/index.html
+!/demo/index.html
+!/demo/*.csv
+__pycache__/
+.DS_Store
+Thumbs.db
+.vscode/

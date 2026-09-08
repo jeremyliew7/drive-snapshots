@@ -1,0 +1,23 @@
+name: Tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Scanner and report smoke tests
+        shell: pwsh
+        run: ./tests/smoke.ps1
+      - name: Viewer parser tests
+        run: node --test tests/viewer.test.cjs
+      - name: Regenerate synthetic demo
+        shell: pwsh
+        run: ./scripts/build-demo.ps1

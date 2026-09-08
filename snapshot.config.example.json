@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "paths": ["./example-folder"],
+  "outputDirectory": "snapshots",
+  "maxDepth": 5
+}
