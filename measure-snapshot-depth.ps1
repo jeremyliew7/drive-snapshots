@@ -6,7 +6,10 @@ Recommend a reporting depth per local disk using a bounded, read-only directory 
 [CmdletBinding()]
 param(
     [string[]]$Path,
-    [ValidateRange(1,1000000)][int]$TargetRows = 10000,
+    [ValidateRange(1,1000000)][int]$TargetRows = 50000,
+    [ValidateSet('Growth','Budget')][string]$Strategy = 'Growth',
+    [ValidateRange(1,1000000)][int]$MinAddedRows = 5000,
+    [ValidateRange(1.01,1000)][double]$GrowthFactor = 3,
     [ValidateRange(1,100)][int]$MaxProbeDepth = 12,
     [ValidateRange(1,10000000)][int]$MaxEntries = 500000,
     [ValidateRange(1,3600)][int]$TimeBudgetSeconds = 20,
@@ -14,6 +17,7 @@ param(
     [string]$Output = (Join-Path $PSScriptRoot 'reports/depth-assessment.json')
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'scripts/select-snapshot-depth.ps1')
 if (-not $Path) {
     if (-not $IsWindows) { throw 'Specify -Path for mount points or directories on this platform.' }
     $Path = @([IO.DriveInfo]::GetDrives() | Where-Object { $_.IsReady -and $_.DriveType -eq 'Fixed' } | ForEach-Object { $_.RootDirectory.FullName })
@@ -69,14 +73,17 @@ $results = @(foreach ($scanPath in $Path) {
         }
     } catch { $reason='InvalidRoot'; $recommended=$null; $failures.Add($_.Exception.Message) }
     $watch.Stop()
+    $selection=Select-SnapshotDepth -Levels $levels.ToArray() -FallbackDepth $recommended -Strategy $Strategy -MinAddedRows $MinAddedRows -GrowthFactor $GrowthFactor
+    $recommended=$selection.Depth
     $confidence = if ($null -eq $recommended) { 'Unavailable' } elseif ($failures.Count -or $reason -in @('TimeBudget','EntryBudget')) { 'Low' } else { 'Observed' }
     [pscustomobject]@{
         Path=$root; RecommendedMaxDepth=$recommended; Confidence=$confidence; StopReason=$reason
+        RecommendationBasis=$selection.Basis; Strategy=$Strategy; MinAddedRows=$MinAddedRows; GrowthFactor=$GrowthFactor
         RecommendedRows=if ($null -ne $recommended) { ($levels | Where-Object Depth -EQ $recommended | Select-Object -First 1).CumulativeRows } else { $null }
         MaxProbeDepth=$MaxProbeDepth; MaxEntries=$MaxEntries; TimeBudgetSeconds=$TimeBudgetSeconds
         TargetRows=$TargetRows; ObservedRows=$rows; EntriesInspected=$entries; LinksSkipped=$links
         ReadFailures=$failures.Count; ElapsedSeconds=[math]::Round($watch.Elapsed.TotalSeconds,2)
-        DepthRows=$levels.ToArray(); Errors=$failures.ToArray()
+        DepthRows=$selection.Levels; Errors=$failures.ToArray()
     }
 })
 if ($Output) {

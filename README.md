@@ -128,39 +128,37 @@ When any read fails, the scanner emits a warning, records failed paths in the lo
 
 ```powershell
 # Windows: assess every ready fixed disk for the current user.
-./measure-snapshot-depth.ps1 | Format-Table Path,RecommendedMaxDepth,RecommendedRows,Confidence,StopReason
+$assessment = ./measure-snapshot-depth.ps1
+$assessment | Format-Table Path,RecommendedMaxDepth,RecommendedRows,RecommendationBasis,Confidence
+# Inspect each depth increment, including incomplete levels.
+$assessment | ForEach-Object { $_.Path; $_.DepthRows | Format-Table }
 
-# Explicit roots (also supported on Linux/macOS).
-./measure-snapshot-depth.ps1 -Path 'D:\Projects' -TargetRows 3000 -MaxProbeDepth 10
-
-# Apply a chosen recommendation to a one-off scan.
-./drive-snapshot.ps1 -Path 'D:\' -MaxDepth 3
+# Explicit roots, also supported on Linux/macOS.
+./measure-snapshot-depth.ps1 -Path 'D:\Projects' -TargetRows 50000
+# Previous policy: deepest complete level within the row budget.
+./measure-snapshot-depth.ps1 -Path 'D:\Projects' -Strategy Budget
 ```
 
-This read-only probe chooses the deepest fully enumerated level whose cumulative directory rows fit `TargetRows` (default **10,000**, independent of the viewer's 1,500-row display window). It measures directory breadth, not file sizes or cleanup value. A recommendation of 0 means root-only detail fits the observed budget. It does not change your configuration or create a full snapshot.
+The default `Growth` strategy examines the cumulative directory count at every depth. `AddedRows` shows the increase from the previous level, and `GrowthRatio` is the current cumulative count divided by the previous count. The first complete level adding at least **5,000 directories** and multiplying cumulative rows by at least **3** is recommended. This includes the first substantial expansion so its detail remains visible; it does not stop one level before it. Both thresholds are configurable (`-MinAddedRows`, `-GrowthFactor`). These are transparent heuristics, not a proven optimal depth or a cleanup-value estimate. No drive-letter rules are used.
 
-Default per-root limits: depth 12, 500,000 inspected entries, and 20 seconds. Files count against the entry budget even though only directories contribute report rows. Checks occur between filesystem operations; a blocked filesystem call can exceed the time budget. A row-budget stop rejects the unfinished level and uses the previous complete one. A depth-limit stop means deeper levels have not been evaluated. No file contents are read and links are not followed. On Windows, automatic discovery includes only ready fixed disks; pass removable, network, or other roots explicitly. On other platforms, `-Path` is required.
+If no qualifying expansion is observed, the fallback is the deepest complete level within `TargetRows`. `-Strategy Budget` always uses that fallback. Default per-root probe ceilings are **50,000 rows**, depth 12, 500,000 inspected entries, and 20 seconds. A 1,500-row ceiling is compact; 200,000 allows more exploration. The ceiling bounds probing, not the size of the final recommendation. A truncated level cannot establish a growth point, and a larger ceiling can reveal previously hidden growth. Files consume the entry budget but only directories contribute report rows. Budgets are checked between filesystem operations; one blocked operation can exceed the time budget.
 
-`RecommendedRows` is the observed cumulative count at the suggested depth; `ObservedRows` can include a partially probed next level. `DepthRows` records the per-level evidence. Permission failures and time/entry truncation produce `Low` confidence; an inaccessible or invalid root produces no recommendation (`Unavailable`). Even `Observed` describes current visible directories, not guaranteed whole-disk coverage. For a broader privileged assessment, run the command from an administrator PowerShell; the probe does not elevate automatically.
+`DepthRows` includes depth, added rows, cumulative rows, growth ratio, enumeration completion, and growth markers. Counts on incomplete levels are lower bounds. `RecommendedRows` is the count at the chosen depth; `ObservedRows` can include part of a deeper level. `RecommendationBasis` explains the choice; `StopReason` separately explains why probing ended. `LevelComplete` means enumeration reached the end of that level, not that every directory was readable. Permission failures or time/entry truncation produce `Low` confidence; an inaccessible root produces no recommendation (`Unavailable`). Even `Observed` describes visible directories only. No file contents are read and links are not followed.
 
-Results are saved locally to the Git-ignored `reports/depth-assessment.json`; use `-Output ''` to suppress writing or supply another private location. `snapshots/` and `reports/` beside the script are excluded by default; use `-ExcludePath` to match a custom scanner output directory. Keep exclusions and privilege levels consistent with the intended scan. Initialization saves recommendations per root in `maxDepthByPath`; the assessment command alone never rewrites configuration. Explicit `-MaxDepth` overrides saved values. Changing report depth does not speed up the scanner's full traversal.
+Windows automatic discovery includes ready fixed disks only; pass other roots explicitly. On other platforms `-Path` is required. Run from an administrator PowerShell for a privileged assessment; no automatic elevation or ACL changes occur. Keep privileges and exclusions consistent with the intended scan.
 
-Run `./tests/depth.ps1` for the recommendation regression tests.
-
+Results are saved to the Git-ignored `reports/depth-assessment.json`; `-Output ''` disables writing. The default exclusions are the script's `snapshots/` and `reports/`; use `-ExcludePath` for custom locations. Assessment alone never rewrites configuration. MaxDepth still limits reported detail, not the scanner's full traversal cost.
 
 ### First-run initialization for users and agents
 
-`./initialize-snapshots.ps1` is the shared first-run entry point. It asks for scan roots, output location, and a row budget, probes each root, and saves its chosen depth and assessment evidence in the private configuration. No file-size snapshot is created until you run `./drive-snapshot.ps1` afterwards. The old `./drive-snapshot.ps1 -Init` entry delegates to the same initializer.
-
-For unattended or agent use, provide the intended roots explicitly:
+`./initialize-snapshots.ps1` is the shared first-run entry. It asks for roots, output location, and probe row ceiling, prints the depth-by-depth table, and saves the selected depths plus assessment evidence in private configuration. Run `./drive-snapshot.ps1` afterwards to capture file sizes. The compatibility entry `./drive-snapshot.ps1 -Init` delegates to the same initializer.
 
 ```powershell
-./initialize-snapshots.ps1 -Path 'C:\','D:\' -OutDirRoot 'snapshots' -TargetRows 50000
+# Non-interactive first setup; the default growth policy is applied independently per root.
+./initialize-snapshots.ps1 -Path 'C:\','D:\' -OutDirRoot 'snapshots'
 ./drive-snapshot.ps1
 ```
 
-Budget choices: **1,500 compact**, **10,000 balanced (default)**, **50,000 detailed**. A larger budget can recommend deeper reports; it does not guarantee a particular depth. The viewer's list window is not a limit on the imported dataset. Use `-MaxProbeDepth`, `-MaxEntries`, and `-TimeBudgetSeconds` on the initializer to tune the probe, or `-MaxDepth` to explicitly choose one depth for all selected roots. It still records the assessment as evidence.
+Initialization accepts the same strategy, growth thresholds and probe limits. `-MaxDepth` explicitly chooses one depth for all selected roots while retaining assessment evidence. Precedence during scanning is explicit `-MaxDepth` → matching `maxDepthByPath` → global `maxDepth`. Existing version-1 configurations remain valid. Existing files are never overwritten; edit them or select another `-Config`.
 
-Saved precedence: explicit scanner `-MaxDepth` → exact matching `maxDepthByPath` entry → global `maxDepth` fallback. Existing version-1 configurations without per-root values still work. Initializers refuse to overwrite existing configuration; edit it or select another `-Config`. Assessment failures below a readable root save a tentative recommendation with a warning and evidence; an unreadable root requires fixing access or an explicit depth before saving. For privileged initialization, launch the initializer from an administrator PowerShell, or use the compatibility `./drive-snapshot.ps1 -Init -Elevate` entry. No ACL changes are performed.
-
-Agents should use the snapshot-capture skill, collect only missing scope/preferences, run this same initializer with known arguments, and then capture with the saved configuration. Use `./tests/depth.ps1` to verify initialization and per-root defaults.
+Partial assessments save tentative recommendations with a warning. An unreadable root needs restored access or an explicit depth before saving. For privileged setup, run from an administrator PowerShell or use `./drive-snapshot.ps1 -Init -Elevate`. Agents use the snapshot-capture skill and this same entry with already-known arguments, asking only for missing scope/preferences. Run `./tests/depth.ps1` for recommendation, initialization and per-root-default tests.

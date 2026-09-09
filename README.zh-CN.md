@@ -124,40 +124,38 @@ Windows 可显式请求 UAC 管理员权限：
 ## 评估每个磁盘适合的报告深度
 
 ```powershell
-# Windows：按当前用户权限评估所有已就绪的固定磁盘。
-./measure-snapshot-depth.ps1 | Format-Table Path,RecommendedMaxDepth,RecommendedRows,Confidence,StopReason
+# Windows：评估当前用户可见的所有已就绪固定磁盘。
+$assessment = ./measure-snapshot-depth.ps1
+$assessment | Format-Table Path,RecommendedMaxDepth,RecommendedRows,RecommendationBasis,Confidence
+# 查看每加深一层的目录数量变化。
+$assessment | ForEach-Object { $_.Path; $_.DepthRows | Format-Table }
 
-# 指定目录，也适用于 Linux/macOS。
-./measure-snapshot-depth.ps1 -Path 'D:\Projects' -TargetRows 3000 -MaxProbeDepth 10
-
-# 选择建议后，应用到一次扫描。
-./drive-snapshot.ps1 -Path 'D:\' -MaxDepth 3
+# 显式指定目录，也支持 Linux/macOS。
+./measure-snapshot-depth.ps1 -Path 'D:\Projects' -TargetRows 50000
+# 保留原先仅按行数预算选择最深完整层的模式。
+./measure-snapshot-depth.ps1 -Path 'D:\Projects' -Strategy Budget
 ```
 
-评估器只读探查目录，选择累计目录行数不超过 `TargetRows` 的最深完整层级。默认预算 **10,000 行**，不再将查看器单次显示 1,500 行的窗口限制当成整个报告的限制。它衡量目录分布，不评估文件大小或清理价值；建议 0 表示当前预算适合仅展示根目录。评估不会修改配置，也不会执行完整快照扫描。
+默认 `Growth` 策略逐层比较累计目录数。`AddedRows` 表示本层新增行数，`GrowthRatio` 表示本层累计行数除以上层累计行数。首次同时满足**新增至少 5,000 行、累计行数达到前一层 3 倍**的完整层级，会被选为建议深度。推荐包含这次首次大量展开，保留有用明细，而不是退回它之前的浅层。阈值可用 `-MinAddedRows`、`-GrowthFactor` 调整。这是可解释的启发式判断，不证明深度最优，也不衡量文件清理价值；不依赖固定盘符规则。
 
-每个根目录默认最多探查 12 层、检查 500,000 个条目、运行 20 秒。文件也消耗条目预算，但不计入报告目录行数。预算在文件系统操作之间检查，单次阻塞调用可能超过时间限制。行数超限时退回上一完整层级；达到深度上限说明更深层级尚未评估。不会读取文件内容或跟随链接。Windows 自动发现仅包含已就绪固定磁盘，移动盘、网络路径等需显式传入；其他系统必须指定 `-Path`。
+没有发现符合条件的增长点时，回退到预算内最深的完整层级；`-Strategy Budget` 始终使用这一回退规则。默认每个根目录的探查上限为 **50,000 行、12 层、500,000 个条目、20 秒**。1,500 行适合紧凑探查，200,000 行允许更详细探索。行数预算限制探查范围，不要求最终推荐达到这个数量。未探查完整的层不能作为增长点；增大预算可能揭示此前未看到的增长。文件消耗条目预算，但只有目录计入报告行数。预算在文件系统操作之间检查，单次阻塞操作可能超时。
 
-`RecommendedRows` 是建议深度的已观察累计行数，`ObservedRows` 可能包含下一层的部分结果，`DepthRows` 保存逐层依据。读取失败或时间/条目预算耗尽会标记 `Low`（低置信度）；根目录不可读或无效时不提供建议，标记 `Unavailable`。`Observed` 也仅表示当前可见目录的观察结果，不保证完整磁盘覆盖。需要提升权限评估时可自行在管理员 PowerShell 中执行，脚本不会自动提权。
+`DepthRows` 保存深度、新增行数、累计行数、增长倍数、是否完成枚举及增长点标记。未完成层的行数只是下界。`RecommendedRows` 是建议深度的目录数，`ObservedRows` 可能包含更深层的部分结果；`RecommendationBasis` 解释推荐原因，`StopReason` 解释探查为何结束。`LevelComplete` 仅表示完成该层枚举流程，不保证所有目录可读。权限失败或时间/条目限制会标记 `Low`，根目录不可读时不提供建议并标记 `Unavailable`；`Observed` 也只代表可见目录。不会读取文件内容或跟随链接。
 
-结果默认写入被 Git 忽略的 `reports/depth-assessment.json`，可用 `-Output ''` 关闭写入。默认排除脚本旁的 `snapshots/` 和 `reports/`；自定义快照输出目录时，用 `-ExcludePath` 保持排除范围一致。正式扫描应保持相同权限和排除范围。初始化入口会把建议保存到 `maxDepthByPath`，单独评估则不修改配置。显式传入 `-MaxDepth` 可以临时覆盖。降低报告深度不会缩短扫描器的完整遍历。
+Windows 自动发现只包含已就绪固定磁盘，其他路径需显式传入；其他平台必须指定 `-Path`。需要提升覆盖范围时，在管理员 PowerShell 评估，脚本不自动提权或修改 ACL。应保持评估与正式扫描的权限和排除范围一致。
 
-运行 `./tests/depth.ps1` 验证推荐逻辑。
-
+结果默认保存到被 Git 忽略的 `reports/depth-assessment.json`，`-Output ''` 可关闭写入。默认排除脚本旁的 `snapshots/` 和 `reports/`，自定义位置可用 `-ExcludePath`。单独评估不修改配置；`maxDepth` 仍只限制报告明细，不缩短正式扫描的完整遍历。
 
 ### 用户与 agent 的统一首次初始化
 
-首次使用执行 `./initialize-snapshots.ps1`，依次选择扫描盘/目录、输出位置和报告行数预算。脚本评估每个根目录，将各自深度和评估依据保存到本机配置。然后运行 `./drive-snapshot.ps1` 才会生成文件大小快照。旧命令 `./drive-snapshot.ps1 -Init` 也会调用同一个初始化入口。
-
-Agent 或无交互使用时，显式传入已确定的范围即可：
+运行 `./initialize-snapshots.ps1`，选择根目录、输出位置和探查行数上限。初始化会打印逐层变化表，把建议深度和评估依据保存到私有配置。然后运行 `./drive-snapshot.ps1` 才生成文件大小快照。兼容命令 `./drive-snapshot.ps1 -Init` 会调用同一入口。
 
 ```powershell
-./initialize-snapshots.ps1 -Path 'C:\','D:\' -OutDirRoot 'snapshots' -TargetRows 50000
+# 无交互首次配置，各根目录分别应用默认增长策略。
+./initialize-snapshots.ps1 -Path 'C:\','D:\' -OutDirRoot 'snapshots'
 ./drive-snapshot.ps1
 ```
 
-详细程度可选 **1,500 行紧凑、10,000 行均衡（默认）、50,000 行详细**。预算增加可能得到更深建议，不保证固定层数；查看器单次显示数量不等于导入数据集的上限。初始化支持 `-MaxProbeDepth`、`-MaxEntries`、`-TimeBudgetSeconds` 调整探查预算；也可显式 `-MaxDepth` 为所有所选根目录指定统一深度，同时保留评估依据。
+初始化支持同样的策略、增长阈值和探查预算；显式 `-MaxDepth` 可为所选根目录统一指定深度，同时保留评估依据。扫描采用命令行 `-MaxDepth` → 匹配的 `maxDepthByPath` → 全局 `maxDepth`。旧版配置继续兼容；初始化不覆盖已有文件，需要修改时可编辑或使用另一个 `-Config`。
 
-扫描采用：命令行 `-MaxDepth` → 精确匹配根目录的 `maxDepthByPath` → 全局 `maxDepth`。旧版只有全局深度的配置继续兼容。初始化拒绝覆盖已有配置，可编辑原配置或使用另一个 `-Config`。后代目录读取失败时会明确警告，将暂定建议及依据保存；根目录无法读取时，必须解决权限或显式指定深度才能保存。需要管理员权限初始化时，可在管理员 PowerShell 运行新入口，或使用兼容命令 `./drive-snapshot.ps1 -Init -Elevate`，不会修改 ACL。
-
-Agent 使用 snapshot-capture skill，补齐尚未明确的范围和偏好，调用同一初始化脚本，再按保存配置扫描。`./tests/depth.ps1` 覆盖初始化和各盘默认值行为。
+不完整评估会警告并保存暂定建议；根目录不可读时，需解决权限或显式指定深度才能保存。管理员初始化可在管理员 PowerShell 执行，或使用 `./drive-snapshot.ps1 -Init -Elevate`。Agent 使用 snapshot-capture skill 和同一入口，只补齐尚未明确的范围与偏好。`./tests/depth.ps1` 覆盖推荐、初始化和逐盘默认值。

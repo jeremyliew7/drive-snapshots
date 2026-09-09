@@ -4,6 +4,21 @@ $project=Split-Path $PSScriptRoot -Parent
 $fixture=Join-Path ([IO.Path]::GetTempPath()) ('drive-depth-test-'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $fixture | Out-Null
 function Assert($value,$message) { if (-not $value) { throw $message } }
+. "$project/scripts/select-snapshot-depth.ps1"
+function Make-Levels($counts) {
+    for ($i=0; $i -lt $counts.Count; $i++) { [pscustomobject]@{Depth=$i; CumulativeRows=$counts[$i]; LevelComplete=$true} }
+}
+$selection=Select-SnapshotDepth -Levels @(Make-Levels @(1,20,400,20000,35000)) -FallbackDepth 4
+Assert ($selection.Depth -eq 3 -and $selection.Levels[3].AddedRows -eq 19600) 'Choose the informative expansion level, not the preceding shallow level'
+$selection=Select-SnapshotDepth -Levels @(Make-Levels @(1,10,100,500,2000,11000,26000)) -FallbackDepth 6
+Assert ($selection.Depth -eq 5) 'Select by growth evidence rather than drive letter'
+$selection=Select-SnapshotDepth -Levels @(Make-Levels @(1,10,100,500,2000,11000,26000)) -FallbackDepth 6 -Strategy Budget
+Assert ($selection.Depth -eq 6) 'Budget strategy must preserve deepest-fitting behavior'
+$selection=Select-SnapshotDepth -Levels @(Make-Levels @(1,10,100)) -FallbackDepth 2
+Assert ($selection.Depth -eq 2 -and -not $selection.Levels[1].GrowthOnset) 'Large ratios in tiny trees are not material growth'
+$truncated=@(Make-Levels @(1,100,20000)); $truncated[2].LevelComplete=$false
+$selection=Select-SnapshotDepth -Levels $truncated -FallbackDepth 1
+Assert ($selection.Depth -eq 1 -and -not $selection.Levels[2].GrowthOnset) 'Partial levels cannot establish a growth onset'
 try {
     $tree=Join-Path $fixture 'tree'
     foreach ($p in @('a/x','a/y','b/x','b/y')) { New-Item -ItemType Directory -Path (Join-Path $tree $p) -Force | Out-Null }
