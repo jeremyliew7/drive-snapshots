@@ -11,6 +11,10 @@ This project captures directory metadata and renders local reports. Read README.
 
 ## Implementation map
 
+Local data has explicit ownership: `reports/` is for visualization reports; `snapshots/` for CSV snapshots and their scan logs; `assessments/` for depth assessment outputs; `backups/config/` for configuration backups. The active configuration remains `snapshot.config.json` at the root. These local directories are Git-ignored. Do not use an ignored directory as a generic dumping ground.
+
+When reinitialization is requested, preserve the old configuration under `backups/config/` with a unique timestamped name. Generate and validate the replacement before retiring the active configuration; avoid leaving no active config if initialization fails. Moving a config to the backup directory is archival only: relative paths resolve beside its original config location, so restore it there before reuse.
+
 - initialize-snapshots.ps1: first-use entry point for users and agents. Collect intended roots, assess depth, and save per-root defaults. Use known arguments non-interactively; do not replace existing configuration. Initialization does not capture file sizes.
 - drive-snapshot.ps1: PowerShell 7.2+, configuration, breadth-first traversal, bottom-up totals, CSV/log output.
 - measure-snapshot-depth.ps1: bounded directory probe; recommends reporting depth without changing configuration. Run tests/depth.ps1 after changes. Low confidence and unavailable results must not be presented as complete inventories.

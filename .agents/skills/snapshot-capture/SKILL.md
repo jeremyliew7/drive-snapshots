@@ -17,6 +17,8 @@ Then run the scanner with the same -Config. Existing configurations remain valid
 
 ## Capture
 
+Keep generated data in its designated directory: snapshots and scan logs in `snapshots/`, assessment results in `assessments/`, visualization reports in `reports/`, and config backups in `backups/config/`. The active config stays at its configured location. For user-requested reinitialization, generate and validate a replacement first, then retain a uniquely named backup before replacing the active file. Do not move the active config away before a replacement succeeds. Archived configs containing relative paths must be restored to their original location before use. Never use `reports/` for backups or intermediate assessment data.
+
 Run from the repository root; substitute the user's actual paths:
 
 ```powershell

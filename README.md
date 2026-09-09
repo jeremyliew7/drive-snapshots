@@ -147,7 +147,7 @@ If no qualifying expansion is observed, the fallback is the deepest complete lev
 
 Windows automatic discovery includes ready fixed disks only; pass other roots explicitly. On other platforms `-Path` is required. Run from an administrator PowerShell for a privileged assessment; no automatic elevation or ACL changes occur. Keep privileges and exclusions consistent with the intended scan.
 
-Results are saved to the Git-ignored `reports/depth-assessment.json`; `-Output ''` disables writing. The default exclusions are the script's `snapshots/` and `reports/`; use `-ExcludePath` for custom locations. Assessment alone never rewrites configuration. MaxDepth still limits reported detail, not the scanner's full traversal cost.
+Results are saved to the Git-ignored `assessments/depth-assessment.json`; `-Output ''` disables writing. The default exclusions are the script's `snapshots/`, `reports/`, `assessments/`, and `backups/`; use `-ExcludePath` for custom locations. Assessment alone never rewrites configuration. MaxDepth still limits reported detail, not the scanner's full traversal cost.
 
 ### First-run initialization for users and agents
 
@@ -162,3 +162,16 @@ Results are saved to the Git-ignored `reports/depth-assessment.json`; `-Output '
 Initialization accepts the same strategy, growth thresholds and probe limits. `-MaxDepth` explicitly chooses one depth for all selected roots while retaining assessment evidence. Precedence during scanning is explicit `-MaxDepth` → matching `maxDepthByPath` → global `maxDepth`. Existing version-1 configurations remain valid. Existing files are never overwritten; edit them or select another `-Config`.
 
 Partial assessments save tentative recommendations with a warning. An unreadable root needs restored access or an explicit depth before saving. For privileged setup, run from an administrator PowerShell or use `./drive-snapshot.ps1 -Init -Elevate`. Agents use the snapshot-capture skill and this same entry with already-known arguments, asking only for missing scope/preferences. Run `./tests/depth.ps1` for recommendation, initialization and per-root-default tests.
+
+
+## Local data directories
+
+| Location | Purpose |
+| --- | --- |
+| `snapshot.config.json` | Active machine configuration. |
+| `snapshots/` | Snapshot CSV files and matching scan logs. |
+| `reports/` | Visualization reports only. |
+| `assessments/` | Standalone depth assessment results. |
+| `backups/config/` | Timestamped configuration backups. |
+
+All these local data locations are ignored by Git. Do not use `reports/` for backups, assessment JSON, or scan logs. The initializer also embeds assessment evidence in the active configuration. When reinitialization is requested, generate and validate a replacement first, preserve a uniquely named backup, then replace the active configuration. Restore archived configs to their original location before using relative paths. Existing legacy `C/` and `D/` snapshots remain usable and need not be moved.

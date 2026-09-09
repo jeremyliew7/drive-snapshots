@@ -13,8 +13,8 @@ param(
     [ValidateRange(1,100)][int]$MaxProbeDepth = 12,
     [ValidateRange(1,10000000)][int]$MaxEntries = 500000,
     [ValidateRange(1,3600)][int]$TimeBudgetSeconds = 20,
-    [string[]]$ExcludePath = @((Join-Path $PSScriptRoot 'snapshots'),(Join-Path $PSScriptRoot 'reports')),
-    [string]$Output = (Join-Path $PSScriptRoot 'reports/depth-assessment.json')
+    [string[]]$ExcludePath = @((Join-Path $PSScriptRoot 'snapshots'),(Join-Path $PSScriptRoot 'reports'),(Join-Path $PSScriptRoot 'assessments'),(Join-Path $PSScriptRoot 'backups')),
+    [string]$Output = (Join-Path $PSScriptRoot 'assessments/depth-assessment.json')
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'scripts/select-snapshot-depth.ps1')

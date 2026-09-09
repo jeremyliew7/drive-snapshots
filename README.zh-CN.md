@@ -144,7 +144,7 @@ $assessment | ForEach-Object { $_.Path; $_.DepthRows | Format-Table }
 
 Windows 自动发现只包含已就绪固定磁盘，其他路径需显式传入；其他平台必须指定 `-Path`。需要提升覆盖范围时，在管理员 PowerShell 评估，脚本不自动提权或修改 ACL。应保持评估与正式扫描的权限和排除范围一致。
 
-结果默认保存到被 Git 忽略的 `reports/depth-assessment.json`，`-Output ''` 可关闭写入。默认排除脚本旁的 `snapshots/` 和 `reports/`，自定义位置可用 `-ExcludePath`。单独评估不修改配置；`maxDepth` 仍只限制报告明细，不缩短正式扫描的完整遍历。
+结果默认保存到被 Git 忽略的 `assessments/depth-assessment.json`，`-Output ''` 可关闭写入。默认排除脚本旁的 `snapshots/`、`reports/`、`assessments/` 和 `backups/`，自定义位置可用 `-ExcludePath`。单独评估不修改配置；`maxDepth` 仍只限制报告明细，不缩短正式扫描的完整遍历。
 
 ### 用户与 agent 的统一首次初始化
 
@@ -159,3 +159,16 @@ Windows 自动发现只包含已就绪固定磁盘，其他路径需显式传入
 初始化支持同样的策略、增长阈值和探查预算；显式 `-MaxDepth` 可为所选根目录统一指定深度，同时保留评估依据。扫描采用命令行 `-MaxDepth` → 匹配的 `maxDepthByPath` → 全局 `maxDepth`。旧版配置继续兼容；初始化不覆盖已有文件，需要修改时可编辑或使用另一个 `-Config`。
 
 不完整评估会警告并保存暂定建议；根目录不可读时，需解决权限或显式指定深度才能保存。管理员初始化可在管理员 PowerShell 执行，或使用 `./drive-snapshot.ps1 -Init -Elevate`。Agent 使用 snapshot-capture skill 和同一入口，只补齐尚未明确的范围与偏好。`./tests/depth.ps1` 覆盖推荐、初始化和逐盘默认值。
+
+
+## 本地数据目录约定
+
+| 位置 | 用途 |
+| --- | --- |
+| `snapshot.config.json` | 当前生效的本机配置。 |
+| `snapshots/` | 快照 CSV 及对应的扫描日志。 |
+| `reports/` | 仅存放可视化报告。 |
+| `assessments/` | 独立的深度评估结果。 |
+| `backups/config/` | 带时间戳的配置备份。 |
+
+上述本机数据位置均被 Git 忽略。不要将备份、评估 JSON 或扫描日志混放到 `reports/`。初始化配置内部也保留评估依据。用户要求重新初始化时，应先生成并验证候选配置，再保留唯一命名的备份并替换活动配置；不要在初始化成功前移走活动配置。备份配置中的相对路径需在恢复到原位置后使用。历史 `C/`、`D/` 快照仍可使用，无需迁移。

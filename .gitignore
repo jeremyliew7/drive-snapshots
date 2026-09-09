@@ -1,6 +1,8 @@
 # Private snapshots, including legacy drive directories.
 /snapshots/
 /reports/
+/assessments/
+/backups/
 /[A-Z]/
 *.csv
 *.log
