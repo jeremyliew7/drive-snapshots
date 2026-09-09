@@ -23,8 +23,8 @@
 需要 **PowerShell 7.2+**（`pwsh`），不支持 Windows PowerShell 5.1。本地主要在 Windows 验证，CI 配置覆盖 Windows、Linux 和 macOS。查看器只需要现代浏览器。
 
 ```powershell
-# 交互选择扫描根目录和输出目录。
-./drive-snapshot.ps1 -Init
+# 选择扫描根目录、输出目录和详细程度，评估并保存各盘默认深度。
+./initialize-snapshots.ps1
 
 # 按保存的设置扫描；隔一段时间再执行一次。
 ./drive-snapshot.ps1
@@ -42,7 +42,7 @@ $files = (Get-ChildItem ./snapshots -Recurse -Filter *.csv).FullName
 
 ```powershell
 # 无交互初始化；替换为自己的目录。
-./drive-snapshot.ps1 -Init -Path 'C:\Users\Public','D:\Projects' -OutDirRoot 'D:\Snapshots' -MaxDepth 4
+./initialize-snapshots.ps1 -Path 'C:\Users\Public','D:\Projects' -OutDirRoot 'D:\Snapshots' -MaxDepth 4
 
 # 临时参数优先于配置文件。
 ./drive-snapshot.ps1 -Path 'D:\Projects' -MaxDepth 3
@@ -55,7 +55,8 @@ $files = (Get-ChildItem ./snapshots -Recurse -Filter *.csv).FullName
 | --- | --- |
 | `paths` / `-Path` | 一个或多个盘根目录或文件夹，无本机专属默认值。 |
 | `outputDirectory` / `-OutDirRoot` | 默认是配置文件旁的 `snapshots`。 |
-| `maxDepth` / `-MaxDepth` | 默认报告 5 层；0 表示仅报告根目录。 |
+| `maxDepth` / `-MaxDepth` | 全局回退值默认 5 层；命令行显式值覆盖各盘默认值。0 表示仅根目录。 |
+| `maxDepthByPath` | 初始化按扫描根目录保存的默认深度，优先于全局回退值。 |
 | `-Config` | 配置文件位置；相对扫描路径和输出路径均以此文件目录为基准。 |
 
 深度限制的是**输出行数**，扫描仍遍历整个子树，才能得到递归总大小。每个扫描根目录使用名称加路径哈希分组，以时间戳保留历史。扫描排除配置的输出目录；比较时应保持输出目录和扫描范围一致。
@@ -117,3 +118,44 @@ Windows 可显式请求 UAC 管理员权限：
 默认不会自动提权。取消 UAC 或提权子进程失败会报错，不会显示扫描成功。管理员权限通常能改善覆盖，但 SYSTEM 专属、锁定或扫描中变化的资源仍可能不可读。其他系统可使用适当权限启动 `pwsh`；`-Elevate` 仅支持 Windows。
 
 读取失败时，脚本会立即在扫描结束输出警告，在日志记录失败路径，给对应目录标记 `Unreadable`，并将 `Incomplete` 向所有祖先传递——即使失败目录超出报告深度也不遗漏。页面会突出显示部分覆盖，提示差异可能来自权限变化。比较系统盘时应保持提权状态一致，并检查两次日志；不可访问的数据不会被猜测补齐。
+
+## 评估每个磁盘适合的报告深度
+
+```powershell
+# Windows：按当前用户权限评估所有已就绪的固定磁盘。
+./measure-snapshot-depth.ps1 | Format-Table Path,RecommendedMaxDepth,RecommendedRows,Confidence,StopReason
+
+# 指定目录，也适用于 Linux/macOS。
+./measure-snapshot-depth.ps1 -Path 'D:\Projects' -TargetRows 3000 -MaxProbeDepth 10
+
+# 选择建议后，应用到一次扫描。
+./drive-snapshot.ps1 -Path 'D:\' -MaxDepth 3
+```
+
+评估器只读探查目录，选择累计目录行数不超过 `TargetRows` 的最深完整层级。默认预算 **10,000 行**，不再将查看器单次显示 1,500 行的窗口限制当成整个报告的限制。它衡量目录分布，不评估文件大小或清理价值；建议 0 表示当前预算适合仅展示根目录。评估不会修改配置，也不会执行完整快照扫描。
+
+每个根目录默认最多探查 12 层、检查 500,000 个条目、运行 20 秒。文件也消耗条目预算，但不计入报告目录行数。预算在文件系统操作之间检查，单次阻塞调用可能超过时间限制。行数超限时退回上一完整层级；达到深度上限说明更深层级尚未评估。不会读取文件内容或跟随链接。Windows 自动发现仅包含已就绪固定磁盘，移动盘、网络路径等需显式传入；其他系统必须指定 `-Path`。
+
+`RecommendedRows` 是建议深度的已观察累计行数，`ObservedRows` 可能包含下一层的部分结果，`DepthRows` 保存逐层依据。读取失败或时间/条目预算耗尽会标记 `Low`（低置信度）；根目录不可读或无效时不提供建议，标记 `Unavailable`。`Observed` 也仅表示当前可见目录的观察结果，不保证完整磁盘覆盖。需要提升权限评估时可自行在管理员 PowerShell 中执行，脚本不会自动提权。
+
+结果默认写入被 Git 忽略的 `reports/depth-assessment.json`，可用 `-Output ''` 关闭写入。默认排除脚本旁的 `snapshots/` 和 `reports/`；自定义快照输出目录时，用 `-ExcludePath` 保持排除范围一致。正式扫描应保持相同权限和排除范围。初始化入口会把建议保存到 `maxDepthByPath`，单独评估则不修改配置。显式传入 `-MaxDepth` 可以临时覆盖。降低报告深度不会缩短扫描器的完整遍历。
+
+运行 `./tests/depth.ps1` 验证推荐逻辑。
+
+
+### 用户与 agent 的统一首次初始化
+
+首次使用执行 `./initialize-snapshots.ps1`，依次选择扫描盘/目录、输出位置和报告行数预算。脚本评估每个根目录，将各自深度和评估依据保存到本机配置。然后运行 `./drive-snapshot.ps1` 才会生成文件大小快照。旧命令 `./drive-snapshot.ps1 -Init` 也会调用同一个初始化入口。
+
+Agent 或无交互使用时，显式传入已确定的范围即可：
+
+```powershell
+./initialize-snapshots.ps1 -Path 'C:\','D:\' -OutDirRoot 'snapshots' -TargetRows 50000
+./drive-snapshot.ps1
+```
+
+详细程度可选 **1,500 行紧凑、10,000 行均衡（默认）、50,000 行详细**。预算增加可能得到更深建议，不保证固定层数；查看器单次显示数量不等于导入数据集的上限。初始化支持 `-MaxProbeDepth`、`-MaxEntries`、`-TimeBudgetSeconds` 调整探查预算；也可显式 `-MaxDepth` 为所有所选根目录指定统一深度，同时保留评估依据。
+
+扫描采用：命令行 `-MaxDepth` → 精确匹配根目录的 `maxDepthByPath` → 全局 `maxDepth`。旧版只有全局深度的配置继续兼容。初始化拒绝覆盖已有配置，可编辑原配置或使用另一个 `-Config`。后代目录读取失败时会明确警告，将暂定建议及依据保存；根目录无法读取时，必须解决权限或显式指定深度才能保存。需要管理员权限初始化时，可在管理员 PowerShell 运行新入口，或使用兼容命令 `./drive-snapshot.ps1 -Init -Elevate`，不会修改 ACL。
+
+Agent 使用 snapshot-capture skill，补齐尚未明确的范围和偏好，调用同一初始化脚本，再按保存配置扫描。`./tests/depth.ps1` 覆盖初始化和各盘默认值行为。

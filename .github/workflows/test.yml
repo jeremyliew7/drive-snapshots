@@ -15,7 +15,9 @@ jobs:
           node-version: '22'
       - name: Scanner and report smoke tests
         shell: pwsh
-        run: ./tests/smoke.ps1
+        run: |
+          ./tests/smoke.ps1
+          ./tests/depth.ps1
       - name: Viewer parser tests
         run: node --test tests/viewer.test.cjs
       - name: Regenerate synthetic demo

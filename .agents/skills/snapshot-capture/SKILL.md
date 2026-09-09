@@ -11,7 +11,9 @@ Use the user's requested roots and overrides, otherwise reuse the existing snaps
 
 Check that PowerShell 7.2+ is available and each root exists as a real directory, not a file or link. Relative scan/output paths resolve beside the configuration file. MaxDepth limits reported rows, not traversal cost; a whole-drive scan may take considerable time.
 
-For a one-off request, pass overrides without modifying saved configuration. For requested initial setup, supply known values non-interactively to -Init, then run the scanner: initialization alone does not capture a snapshot. Use the default snapshots output directory if the user has no output preference. Do not overwrite an existing configuration or change unrelated settings.
+On first use, when no configuration exists, use initialize-snapshots.ps1 with the intended roots and known options non-interactively. It probes each root and saves maxDepthByPath plus assessment evidence; it does not capture file sizes. Ask only for missing roots or material preferences, reusing the user's authorized scope. Default to the balanced 10,000-row budget unless they request another detail level. Explicitly mention Low confidence or depth-limit results; recommendations are heuristics, not proven optimal depths. If a root cannot be assessed, resolve access or obtain an explicit depth rather than guessing.
+
+Then run the scanner with the same -Config. Existing configurations remain valid and must not be overwritten. For a one-off request, pass scan overrides without modifying saved settings; an explicit -MaxDepth overrides per-root defaults. Use the default snapshots output directory if the user has no output preference. The compatibility entry drive-snapshot.ps1 -Init delegates to the same initializer.
 
 ## Capture
 
@@ -25,7 +27,7 @@ Run from the repository root; substitute the user's actual paths:
 ./drive-snapshot.ps1 -Path 'D:\Projects' -MaxDepth 4
 
 # First-time setup when requested, followed by capture.
-./drive-snapshot.ps1 -Init -Path 'D:\Projects' -OutDirRoot 'snapshots' -MaxDepth 5
+./initialize-snapshots.ps1 -Path 'D:\Projects' -OutDirRoot 'snapshots' -TargetRows 10000
 ./drive-snapshot.ps1
 
 # Explicitly requested Windows administrator scan.

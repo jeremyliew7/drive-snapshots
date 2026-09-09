@@ -11,7 +11,9 @@ This project captures directory metadata and renders local reports. Read README.
 
 ## Implementation map
 
+- initialize-snapshots.ps1: first-use entry point for users and agents. Collect intended roots, assess depth, and save per-root defaults. Use known arguments non-interactively; do not replace existing configuration. Initialization does not capture file sizes.
 - drive-snapshot.ps1: PowerShell 7.2+, configuration, breadth-first traversal, bottom-up totals, CSV/log output.
+- measure-snapshot-depth.ps1: bounded directory probe; recommends reporting depth without changing configuration. Run tests/depth.ps1 after changes. Low confidence and unavailable results must not be presented as complete inventories.
 - export-report.ps1: standalone report bundling. Escape `<` in embedded JSON; filenames must never become executable HTML.
 - viewer/: dependency-free browser UI. Use textContent for imported labels. Keep import and export offline-capable.
 - demo/: generated, fictional data only. Regenerate with scripts/build-demo.ps1 after viewer changes.

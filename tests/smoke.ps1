@@ -50,6 +50,10 @@ try {
         $restricted.AddAccessRule($rule)
         try {
             Set-Acl -LiteralPath $blocked -AclObject $restricted
+            $assessment=& "$project/measure-snapshot-depth.ps1" -Path $blocked -Output ''
+            Assert ($null -eq $assessment.RecommendedMaxDepth -and $assessment.Confidence -eq 'Unavailable') 'Unreadable root must not receive a depth recommendation'
+            $assessment=& "$project/measure-snapshot-depth.ps1" -Path $source -Output ''
+            Assert ($assessment.ReadFailures -gt 0 -and $assessment.Confidence -eq 'Low') 'Unreadable descendants must lower depth confidence'
             & "$project/drive-snapshot.ps1" -Config $config -MaxDepth 0
             $latest=Get-ChildItem -LiteralPath $out -Recurse -Filter *.csv | Sort-Object LastWriteTimeUtc | Select-Object -Last 1
             $partial=@(Import-Csv -LiteralPath $latest.FullName)

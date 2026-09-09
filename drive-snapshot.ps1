@@ -32,28 +32,16 @@ if ($Elevate -and -not $isAdmin) {
     return
 }
 if ($Init) {
-    if (Test-Path -LiteralPath $Config) { throw "Config already exists: $Config. Edit it or choose another -Config." }
-    if (-not $Path) {
-        $answer = Read-Host 'Folders or drives to scan (separate with semicolons)'
-        $Path = @($answer.Split(';') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $setup=@{Config=$Config}
+    foreach ($key in @('Path','OutDirRoot','MaxDepth')) {
+        if ($PSBoundParameters.ContainsKey($key)) { $setup[$key]=$PSBoundParameters[$key] }
     }
-    if (-not $Path) { throw 'Choose at least one scan root.' }
-    $Path = @($Path | ForEach-Object {
-        $candidate = Get-Item -LiteralPath $_ -Force
-        if (-not $candidate.PSIsContainer -or ($candidate.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Choose a real directory, not a file or link: $_" }
-        $candidate.FullName
-    })
-    if (-not $OutDirRoot) {
-        $answer = Read-Host 'Output directory (Enter for ./snapshots beside config)'
-        $OutDirRoot = if ($answer) { $answer } else { 'snapshots' }
-    }
-    @{ version=1; paths=$Path; outputDirectory=$OutDirRoot; maxDepth=$MaxDepth } |
-        ConvertTo-Json | Set-Content -LiteralPath $Config -Encoding utf8
-    Write-Output "Configuration saved: $Config"
+    & (Join-Path $PSScriptRoot 'initialize-snapshots.ps1') @setup
     return
 }
+$settings=$null
 if (Test-Path -LiteralPath $Config) {
-    $settings = Get-Content -LiteralPath $Config -Raw | ConvertFrom-Json
+    $settings = Get-Content -LiteralPath $Config -Raw | ConvertFrom-Json -AsHashtable
     if ($settings.version -ne 1) { throw 'Unsupported config version.' }
     if (-not $Path) { $Path = $settings.paths }
     if (-not $OutDirRoot) { $OutDirRoot = $settings.outputDirectory }
@@ -73,6 +61,20 @@ foreach ($scanPath in $Path) {
     if (-not $item.PSIsContainer) { throw "Not a directory: $scanPath" }
     if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Scan root must not be a link: $scanPath" }
     $root = $item.FullName
+    $reportDepth=$MaxDepth
+    if (-not $PSBoundParameters.ContainsKey('MaxDepth') -and $settings -and $settings.maxDepthByPath) {
+        foreach ($configuredRoot in $settings.maxDepthByPath.Keys) {
+            $resolvedRoot=$configuredRoot
+            if (-not [IO.Path]::IsPathRooted($resolvedRoot)) { $resolvedRoot=Join-Path $configDir $resolvedRoot }
+            $resolvedRoot=[IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($resolvedRoot))
+            if ($resolvedRoot.Equals([IO.Path]::TrimEndingDirectorySeparator($root),$comparison)) {
+                $parsedDepth=0
+                if (-not [int]::TryParse([string]$settings.maxDepthByPath[$configuredRoot],[ref]$parsedDepth) -or $parsedDepth -lt 0 -or $parsedDepth -gt 100) { throw "Invalid maxDepthByPath for $configuredRoot" }
+                $reportDepth=$parsedDepth
+                break
+            }
+        }
+    }
     $outPrefix = $OutDirRoot + [IO.Path]::DirectorySeparatorChar
     if ($root.Equals($OutDirRoot,$comparison) -or $root.StartsWith($outPrefix,$comparison)) { throw 'Scan root cannot be inside the output directory.' }
     $nodes = [Collections.Generic.Dictionary[string,object]]::new($comparer)
@@ -113,10 +115,10 @@ foreach ($scanPath in $Path) {
     $outFolder = Join-Path $OutDirRoot "$label-$hash"
     New-Item -ItemType Directory -Force -Path $outFolder | Out-Null
     $file = Join-Path $outFolder ("Drive-Snapshot-{0}-{1}.csv" -f (Get-Date -Format 'yyyyMMdd_HHmmss_fff'),([guid]::NewGuid().ToString('N').Substring(0,6)))
-    $nodes.Values | Where-Object Depth -LE $MaxDepth | Sort-Object Depth,Path |
+    $nodes.Values | Where-Object Depth -LE $reportDepth | Sort-Object Depth,Path |
         Select-Object Depth,Path,SizeBytes,SizeGiB,FileCount,DirCount,Reparse,Unreadable,Incomplete |
         Export-Csv -LiteralPath $file -NoTypeInformation -Encoding utf8BOM
-    @("Started UTC: $($started.ToString('o'))", "Root: $root", "Reported depth: $MaxDepth (full traversal)",
+    @("Started UTC: $($started.ToString('o'))", "Root: $root", "Reported depth: $reportDepth (full traversal)",
       "Directories: $($nodes.Count)", "Logical bytes: $($nodes[$root].SizeBytes)",
       "Incomplete: $($nodes[$root].Incomplete)", "Elevated (Windows): $isAdmin", 'Links skipped; output directory excluded.', $errors) |
         Set-Content -LiteralPath ([IO.Path]::ChangeExtension($file,'.log')) -Encoding utf8
