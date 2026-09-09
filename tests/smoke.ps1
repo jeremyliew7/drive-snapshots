@@ -23,6 +23,9 @@ try {
         Assert ([long]$rows[0].FileCount -eq 2) 'Recursive file count'
         Assert ($rows.Count -eq 2) 'Depth limits reported rows only'
         Assert ($rows[0].Incomplete -eq '0') 'Readable fixture should be complete'
+        $logText=Get-Content -LiteralPath ([IO.Path]::ChangeExtension($file.FullName,'.log')) -Raw
+        Assert ($logText.Contains('40 bytes') -and $logText.Contains('COMPLETED - no read errors recorded')) 'Log must report measured bytes and successful coverage'
+        Assert ($logText.Contains((Join-Path $source '中文, folder'))) 'Log must preserve full Unicode directory paths'
     }
     $report=Join-Path $testRoot 'report.html'
     & "$project/export-report.ps1" -Snapshot $csv.FullName -Output $report
@@ -59,6 +62,8 @@ try {
             $partial=@(Import-Csv -LiteralPath $latest.FullName)
             Assert ($partial.Count -eq 1 -and $partial[0].Incomplete -eq '1') 'Permission failure below report depth must propagate to root'
             Assert ([long]$partial[0].SizeBytes -eq 40) 'Inaccessible bytes must not be invented'
+            $logText=Get-Content -LiteralPath ([IO.Path]::ChangeExtension($latest.FullName,'.log')) -Raw
+            Assert ($logText.Contains('PARTIAL - measured sizes are lower bounds') -and $logText.Contains($blocked)) 'Log must expose incomplete coverage and the failed path even at depth zero'
         } finally { Set-Acl -LiteralPath $blocked -AclObject $original }
     }
     Write-Output 'PASS: scanner totals, depth, output exclusion, history, configuration, and safe standalone export'

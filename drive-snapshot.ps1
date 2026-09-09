@@ -118,10 +118,85 @@ foreach ($scanPath in $Path) {
     $nodes.Values | Where-Object Depth -LE $reportDepth | Sort-Object Depth,Path |
         Select-Object Depth,Path,SizeBytes,SizeGiB,FileCount,DirCount,Reparse,Unreadable,Incomplete |
         Export-Csv -LiteralPath $file -NoTypeInformation -Encoding utf8BOM
-    @("Started UTC: $($started.ToString('o'))", "Root: $root", "Reported depth: $reportDepth (full traversal)",
-      "Directories: $($nodes.Count)", "Logical bytes: $($nodes[$root].SizeBytes)",
-      "Incomplete: $($nodes[$root].Incomplete)", "Elevated (Windows): $isAdmin", 'Links skipped; output directory excluded.', $errors) |
-        Set-Content -LiteralPath ([IO.Path]::ChangeExtension($file,'.log')) -Encoding utf8
+    $finished = [DateTime]::UtcNow
+    $rootNode = $nodes[$root]
+    $culture = [Globalization.CultureInfo]::InvariantCulture
+    $log = [Collections.Generic.List[string]]::new()
+    function Add-LogField([string]$Name, [object]$Value) {
+        $log.Add(('{0,-25}: {1}' -f $Name,$Value))
+    }
+    function Format-LogSize([long]$Bytes) {
+        return ('{0} GiB ({1} bytes)' -f ($Bytes / 1GB).ToString('N2',$culture),$Bytes.ToString('N0',$culture))
+    }
+    $log.Add('DRIVE SNAPSHOT')
+    $log.Add(('=' * 78))
+    Add-LogField 'Status' $(if ($rootNode.Incomplete) { 'PARTIAL - measured sizes are lower bounds' } else { 'COMPLETED - no read errors recorded' })
+    Add-LogField 'Root path' $root
+    Add-LogField 'Started (UTC)' $started.ToString('yyyy-MM-dd HH:mm:ss')
+    Add-LogField 'Finished (UTC)' $finished.ToString('yyyy-MM-dd HH:mm:ss')
+    Add-LogField 'Elapsed' ('{0} s' -f ($finished-$started).TotalSeconds.ToString('N1',$culture))
+    Add-LogField 'Elevated (Windows)' $(if ($IsWindows) { $isAdmin } else { 'N/A' })
+    Add-LogField 'Reported depth' "$reportDepth (root = 0; full subtree traversed)"
+    Add-LogField 'Output CSV' $file
+    Add-LogField 'Excluded output folder' $OutDirRoot
+    $log.Add('')
+    $log.Add('SCAN SUMMARY')
+    $log.Add(('-' * 78))
+    Add-LogField 'Observed logical size' (Format-LogSize $rootNode.SizeBytes)
+    Add-LogField 'Files observed' $rootNode.FileCount.ToString('N0',$culture)
+    Add-LogField 'Directory records' $nodes.Count.ToString('N0',$culture)
+    Add-LogField 'Rows exported' (@($nodes.Values | Where-Object Depth -LE $reportDepth).Count.ToString('N0',$culture))
+    Add-LogField 'Directories with errors' (@($nodes.Values | Where-Object Unreadable -EQ 1).Count.ToString('N0',$culture))
+    Add-LogField 'Read failures' $errors.Count.ToString('N0',$culture)
+    Add-LogField 'Directory links skipped' (@($nodes.Values | Where-Object Reparse -EQ 1).Count.ToString('N0',$culture))
+    $log.Add('File links are also skipped. Directory records include skipped directory links.')
+    $log.Add('')
+    $log.Add('VOLUME CAPACITY (filesystem allocation; separate from scan totals)')
+    $log.Add(('-' * 78))
+    try {
+        # Select the longest matching mounted volume, including POSIX mount points.
+        $volume = [IO.DriveInfo]::GetDrives() | Where-Object {
+            $mount=$_.RootDirectory.FullName
+            $prefix=$mount.TrimEnd([IO.Path]::DirectorySeparatorChar)+[IO.Path]::DirectorySeparatorChar
+            $root.Equals($mount,$comparison) -or $root.StartsWith($prefix,$comparison)
+        } | Sort-Object { $_.RootDirectory.FullName.Length } -Descending | Select-Object -First 1
+        if (-not $volume -or -not $volume.IsReady) { throw 'No ready matching volume.' }
+        Add-LogField 'Volume' $volume.RootDirectory.FullName
+        Add-LogField 'Total capacity' (Format-LogSize $volume.TotalSize)
+        Add-LogField 'Used allocation' (Format-LogSize ($volume.TotalSize-$volume.TotalFreeSpace))
+        Add-LogField 'Total free' (Format-LogSize $volume.TotalFreeSpace)
+        Add-LogField 'Available to caller' (Format-LogSize $volume.AvailableFreeSpace)
+    } catch { $log.Add('Capacity unavailable; directory scan results are still valid.') }
+    $log.Add('')
+    $log.Add('TOP-LEVEL FOLDERS (recursive size, largest first; up to 30)')
+    $log.Add(('-' * 78))
+    $log.Add(('{0,12}  {1,12}  {2,-8}  {3}' -f 'Size GiB','Files','Coverage','Path'))
+    $topFolders=@($nodes.Values | Where-Object Depth -EQ 1 | Sort-Object SizeBytes -Descending)
+    foreach ($folder in ($topFolders | Select-Object -First 30)) {
+        $coverage=if ($folder.Reparse) { 'LINK' } elseif ($folder.Incomplete) { 'PARTIAL' } else { 'OK' }
+        $log.Add(('{0,12}  {1,12}  {2,-8}  {3}' -f ($folder.SizeBytes/1GB).ToString('N2',$culture),$folder.FileCount.ToString('N0',$culture),$coverage,$folder.Path))
+    }
+    if (-not $topFolders.Count) { $log.Add('(No child directories observed.)') }
+    if ($topFolders.Count -gt 30) { $log.Add("... $($topFolders.Count-30) additional top-level folders omitted from this summary.") }
+    $log.Add('OK = no recorded read errors; PARTIAL = lower bound; LINK = not traversed.')
+    $log.Add('Root-level files contribute to the scan total, not to these child-folder totals.')
+    $log.Add('This summary uses observed directories even when reported depth is 0.')
+    $log.Add('')
+    $log.Add('READ FAILURES')
+    $log.Add(('-' * 78))
+    if ($errors.Count) {
+        for ($i=0; $i -lt $errors.Count; $i++) { $log.Add(('[{0}] {1}' -f ($i+1),$errors[$i])) }
+        $log.Add('Affected directories and their ancestors are marked Incomplete in the CSV.')
+        $log.Add('Administrator access may improve coverage; protected or locked data can remain unreadable.')
+    } else { $log.Add('None recorded.') }
+    $log.Add('')
+    $log.Add('INTERPRETATION')
+    $log.Add(('-' * 78))
+    $log.Add('Compare snapshots with the same root, depth, exclusions, and privilege level.')
+    $log.Add('Logical file sizes differ from allocated space (links, sparse files, compression).')
+    $log.Add('Do not add recursive parent and child totals. Files can change during a scan.')
+    $log.Add('READ-ONLY SCAN: scanned files are unchanged; only snapshot outputs are written.')
+    [IO.File]::WriteAllLines([IO.Path]::ChangeExtension($file,'.log'),$log,[Text.UTF8Encoding]::new($true))
     if ($nodes[$root].Incomplete) {
         Write-Warning 'Partial snapshot: some entries could not be read. Sizes are lower bounds; inspect the log. On Windows, -Elevate may improve coverage but cannot guarantee it.'
     }

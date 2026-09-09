@@ -64,6 +64,8 @@ The scanner always traverses the full subtree to obtain recursive totals. Depth 
 
 ## Read the results correctly
 
+Each UTF-8 log contains an aligned scan summary, UTC timestamps and duration, volume capacity, the 30 largest immediate subfolders, and numbered read failures. Sizes use GiB and exact bytes. Volume allocation is separate from observed logical size. `PARTIAL` means a lower bound; `OK` means no recorded read errors, not guaranteed atomic coverage. Full paths are retained without table truncation. Historical logs are not rewritten.
+
 CSV columns remain compatible with the original scanner:
 
 | Column | Meaning |
