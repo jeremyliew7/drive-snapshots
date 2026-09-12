@@ -8,3 +8,5 @@ Read README.md for the schema and caveats. Select snapshots for the user's root 
 Join rows by full path (case-insensitive Windows paths, case-sensitive POSIX paths). Compute latest minus baseline SizeBytes. Missing rows are newly observed or not observed, never proven creation/deletion. Flag Unreadable and Incomplete; legacy files cannot establish descendant coverage.
 
 Start with root delta and immediate children, then drill into the largest changes. Avoid counting a recursive parent and its children in an aggregate. Explain renames and scope changes as alternative causes when relevant. Do not assert duplicates, stale files, or safe deletion from folder sizes alone. Keep private paths in local outputs only; use the synthetic demo for public examples.
+
+Full snapshots carry SnapshotScope=Full and can be compared despite different observed maximum depths. Do not compare Full directly with Limited/legacy data; a truncated snapshot cannot establish absence of deeper folders. ViewDepth is a display preference, not scan scope.

@@ -3,5 +3,6 @@
   "paths": ["./example-folder"],
   "outputDirectory": "snapshots",
   "maxDepth": 5,
+  "elevate": false,
   "maxDepthByPath": {"./example-folder": 7}
 }

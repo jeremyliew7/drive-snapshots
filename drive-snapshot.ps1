@@ -9,9 +9,17 @@ param(
     [string]$OutDirRoot,
     [string]$Config = (Join-Path $PSScriptRoot 'snapshot.config.json'),
     [switch]$Init,
-    [switch]$Elevate
+    [switch]$Elevate,
+    [switch]$LimitDepth
 )
 $ErrorActionPreference = 'Stop'
+$settings=$null
+if (-not $Init -and (Test-Path -LiteralPath $Config)) {
+    $settings=Get-Content -LiteralPath $Config -Raw | ConvertFrom-Json -AsHashtable
+    if ($settings.version -ne 1) { throw 'Unsupported config version.' }
+    if ($settings.ContainsKey('elevate') -and $settings.elevate -isnot [bool]) { throw 'Config elevate must be a JSON boolean.' }
+    if (-not $PSBoundParameters.ContainsKey('Elevate') -and $IsWindows -and $settings.elevate) { $Elevate=$true }
+}
 $isAdmin = $false
 if ($IsWindows) {
     $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -22,6 +30,7 @@ if ($Elevate -and -not $isAdmin) {
     $forward = @{}
     foreach ($k in $PSBoundParameters.Keys) { if ($k -ne 'Elevate') { $forward[$k] = $PSBoundParameters[$k] } }
     if ($forward.ContainsKey('Init')) { $forward.Init = [bool]$Init }
+    if ($forward.ContainsKey('LimitDepth')) { $forward.LimitDepth = [bool]$LimitDepth }
     $forward.Config = [IO.Path]::GetFullPath($Config)
     $payload = @{ script=$PSCommandPath; cwd=(Get-Location).Path; parameters=$forward } | ConvertTo-Json -Depth 6 -Compress
     $payload64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payload))
@@ -39,10 +48,7 @@ if ($Init) {
     & (Join-Path $PSScriptRoot 'initialize-snapshots.ps1') @setup
     return
 }
-$settings=$null
-if (Test-Path -LiteralPath $Config) {
-    $settings = Get-Content -LiteralPath $Config -Raw | ConvertFrom-Json -AsHashtable
-    if ($settings.version -ne 1) { throw 'Unsupported config version.' }
+if ($settings) {
     if (-not $Path) { $Path = $settings.paths }
     if (-not $OutDirRoot) { $OutDirRoot = $settings.outputDirectory }
     if (-not $PSBoundParameters.ContainsKey('MaxDepth')) { $MaxDepth = [int]$settings.maxDepth }
@@ -115,8 +121,12 @@ foreach ($scanPath in $Path) {
     $outFolder = Join-Path $OutDirRoot "$label-$hash"
     New-Item -ItemType Directory -Force -Path $outFolder | Out-Null
     $file = Join-Path $outFolder ("Drive-Snapshot-{0}-{1}.csv" -f (Get-Date -Format 'yyyyMMdd_HHmmss_fff'),([guid]::NewGuid().ToString('N').Substring(0,6)))
-    $nodes.Values | Where-Object Depth -LE $reportDepth | Sort-Object Depth,Path |
-        Select-Object Depth,Path,SizeBytes,SizeGiB,FileCount,DirCount,Reparse,Unreadable,Incomplete |
+    $exportStarted=[DateTime]::UtcNow
+    $exportRows=@($nodes.Values | Where-Object { -not $LimitDepth -or $_.Depth -le $reportDepth })
+    $exportRows | Sort-Object Depth,Path |
+        Select-Object Depth,Path,SizeBytes,SizeGiB,FileCount,DirCount,Reparse,Unreadable,Incomplete,
+            @{Name='SnapshotScope';Expression={if ($LimitDepth) { 'Limited' } else { 'Full' }}},
+            @{Name='ViewDepth';Expression={$reportDepth}} |
         Export-Csv -LiteralPath $file -NoTypeInformation -Encoding utf8BOM
     $finished = [DateTime]::UtcNow
     $rootNode = $nodes[$root]
@@ -136,7 +146,10 @@ foreach ($scanPath in $Path) {
     Add-LogField 'Finished (UTC)' $finished.ToString('yyyy-MM-dd HH:mm:ss')
     Add-LogField 'Elapsed' ('{0} s' -f ($finished-$started).TotalSeconds.ToString('N1',$culture))
     Add-LogField 'Elevated (Windows)' $(if ($IsWindows) { $isAdmin } else { 'N/A' })
-    Add-LogField 'Reported depth' "$reportDepth (root = 0; full subtree traversed)"
+    Add-LogField 'CSV scope' $(if ($LimitDepth) { "Limited to depth $reportDepth" } else { 'Full observed directory tree (all depths)' })
+    Add-LogField 'Default viewing depth' $reportDepth
+    Add-LogField 'CSV export elapsed' ('{0} s' -f ($finished-$exportStarted).TotalSeconds.ToString('N2',$culture))
+    Add-LogField 'CSV file size' (Format-LogSize (Get-Item -LiteralPath $file).Length)
     Add-LogField 'Output CSV' $file
     Add-LogField 'Excluded output folder' $OutDirRoot
     $log.Add('')
@@ -145,7 +158,7 @@ foreach ($scanPath in $Path) {
     Add-LogField 'Observed logical size' (Format-LogSize $rootNode.SizeBytes)
     Add-LogField 'Files observed' $rootNode.FileCount.ToString('N0',$culture)
     Add-LogField 'Directory records' $nodes.Count.ToString('N0',$culture)
-    Add-LogField 'Rows exported' (@($nodes.Values | Where-Object Depth -LE $reportDepth).Count.ToString('N0',$culture))
+    Add-LogField 'Rows exported' $exportRows.Count.ToString('N0',$culture)
     Add-LogField 'Directories with errors' (@($nodes.Values | Where-Object Unreadable -EQ 1).Count.ToString('N0',$culture))
     Add-LogField 'Read failures' $errors.Count.ToString('N0',$culture)
     Add-LogField 'Directory links skipped' (@($nodes.Values | Where-Object Reparse -EQ 1).Count.ToString('N0',$culture))

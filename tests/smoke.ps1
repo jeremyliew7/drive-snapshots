@@ -13,8 +13,8 @@ try {
     $out=Join-Path $source 'snapshots'
     $config=Join-Path $testRoot 'settings.json'
     & "$project/drive-snapshot.ps1" -Init -Path $source -OutDirRoot $out -MaxDepth 1 -Config $config
-    & "$project/drive-snapshot.ps1" -Config $config
-    & "$project/drive-snapshot.ps1" -Config $config
+    & "$project/drive-snapshot.ps1" -LimitDepth -Config $config
+    & "$project/drive-snapshot.ps1" -LimitDepth -Config $config
     $csv=@(Get-ChildItem -LiteralPath $out -Recurse -Filter *.csv)
     Assert ($csv.Count -eq 2) 'History must retain distinct scans'
     foreach ($file in $csv) {
@@ -41,6 +41,11 @@ try {
     $failed=$false
     try { & "$project/drive-snapshot.ps1" -Init -Path $source -Config $config } catch { $failed=$true }
     Assert $failed 'Initialization must not overwrite config'
+    & "$project/drive-snapshot.ps1" -Config $config -MaxDepth 0
+    $fullFile=Get-ChildItem -LiteralPath $out -Recurse -Filter *.csv | Sort-Object LastWriteTimeUtc | Select-Object -Last 1
+    $fullRows=@(Import-Csv -LiteralPath $fullFile.FullName)
+    Assert ($fullRows.Count -eq 3 -and $fullRows[-1].Depth -eq '2') 'Default CSV must include all observed depths'
+    Assert ($fullRows[0].SnapshotScope -eq 'Full' -and $fullRows[0].ViewDepth -eq '0') 'Viewing preference must not truncate data'
     if ($IsWindows) {
         # Deny enumeration on an isolated fixture, then restore its ACL before cleanup.
         $blocked=Join-Path $source 'blocked'
@@ -57,7 +62,7 @@ try {
             Assert ($null -eq $assessment.RecommendedMaxDepth -and $assessment.Confidence -eq 'Unavailable') 'Unreadable root must not receive a depth recommendation'
             $assessment=& "$project/measure-snapshot-depth.ps1" -Path $source -Output ''
             Assert ($assessment.ReadFailures -gt 0 -and $assessment.Confidence -eq 'Low') 'Unreadable descendants must lower depth confidence'
-            & "$project/drive-snapshot.ps1" -Config $config -MaxDepth 0
+            & "$project/drive-snapshot.ps1" -LimitDepth -Config $config -MaxDepth 0
             $latest=Get-ChildItem -LiteralPath $out -Recurse -Filter *.csv | Sort-Object LastWriteTimeUtc | Select-Object -Last 1
             $partial=@(Import-Csv -LiteralPath $latest.FullName)
             Assert ($partial.Count -eq 1 -and $partial[0].Incomplete -eq '1') 'Permission failure below report depth must propagate to root'

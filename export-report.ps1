@@ -32,5 +32,5 @@ $template = $template.Replace('<script src="app.js"></script>',"<script>$js</scr
 $template = $template.Replace('<script id="snapshot-data" type="application/json">[]</script>',"<script id=`"snapshot-data`" type=`"application/json`">$json</script>")
 $Output = [IO.Path]::GetFullPath($Output)
 New-Item -ItemType Directory -Force -Path (Split-Path $Output -Parent) | Out-Null
-Set-Content -LiteralPath $Output -Value $template -Encoding utf8
+Set-Content -LiteralPath $Output -Value ($template.TrimEnd()+"`n") -Encoding utf8 -NoNewline
 Write-Output "Report written: $Output"

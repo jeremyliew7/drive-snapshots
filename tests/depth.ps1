@@ -44,7 +44,7 @@ try {
     $failed=$false
     try { & "$project/initialize-snapshots.ps1" -Path $tree -Config $config } catch { $failed=$true }
     Assert ($failed -and (Get-FileHash $config).Hash -eq $hash) 'Existing config must be preserved'
-    & "$project/drive-snapshot.ps1" -Config $config
+    & "$project/drive-snapshot.ps1" -LimitDepth -Config $config
     $csv=@(Get-ChildItem $output -Recurse -Filter *.csv)
     Assert ($csv.Count -eq 2) 'Both configured roots must be captured'
     foreach ($file in $csv) {
@@ -52,7 +52,7 @@ try {
         $expected=if ($rows[0].Path -eq $tree) { 7 } else { 1 }
         Assert ($rows.Count -eq $expected) 'Scanner must use each root depth'
     }
-    & "$project/drive-snapshot.ps1" -Config $config -Path $tree -MaxDepth 0
+    & "$project/drive-snapshot.ps1" -LimitDepth -Config $config -Path $tree -MaxDepth 0
     $latest=Get-ChildItem $output -Recurse -Filter *.csv | Sort-Object LastWriteTimeUtc | Select-Object -Last 1
     Assert (@(Import-Csv $latest.FullName).Count -eq 1) 'Explicit depth must override per-root defaults'
     Assert ((Get-FileHash $config).Hash -eq $hash) 'One-off scan must not rewrite defaults'
