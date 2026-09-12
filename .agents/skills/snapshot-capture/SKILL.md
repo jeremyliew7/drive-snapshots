@@ -1,49 +1,56 @@
 ---
 name: snapshot-capture
-description: Generate new read-only directory or drive snapshots using the project scanner, including initial configuration, optional Windows elevation, and coverage verification. Use for capturing or refreshing snapshots, not merely viewing existing reports.
+description: Generate read-only directory or drive snapshots with the project's default WizTree workflow, preserving raw CSV and producing viewer-ready data.
 ---
 
-Read the repository README.md for current scanner parameters and CSV semantics. Use the existing drive-snapshot.ps1; do not implement a second scanner.
+Read `README.md` and `.agents/skills/wiztree-csv-export/SKILL.md` before capture work.
 
-## Select scope and settings
+## Default workflow
 
-Use the user's requested roots and overrides, otherwise reuse the existing snapshot.config.json (or their selected -Config). If neither identifies the roots, ask which drives or directories to scan; do not guess a system drive or scan every mounted volume. Reuse settings already authorized in the conversation without reconfirmation.
+On Windows, use `wiztree-snapshot.ps1`. It runs WizTree, preserves the original export under
+`snapshots/wiztree/raw/`, then streams folder rows into the Drive Snapshots schema under
+`snapshots/wiztree/converted/`.
 
-Check that PowerShell 7.2+ is available and each root exists as a real directory, not a file or link. Relative scan/output paths resolve beside the configuration file. MaxDepth limits reported rows, not traversal cost; a whole-drive scan may take considerable time.
+`drive-snapshot.ps1` is the paused built-in PowerShell scanner. Use it only when the user
+explicitly asks for the native scanner or for cross-platform capture.
 
-On first use, when no configuration exists, use initialize-snapshots.ps1 with the intended roots and known options non-interactively. It probes each root and saves maxDepthByPath plus assessment evidence; it does not capture file sizes. Ask only for missing roots or material preferences, reusing the user's authorized scope. Use the default Growth policy and 50,000-row probe ceiling unless the user requests otherwise. Review the depth-by-depth added rows and growth ratios; the first substantial expansion is included in the recommendation. Incomplete levels cannot prove a growth point. Explicitly mention Low confidence or depth-limit results; recommendations are heuristics, not proven optimal depths. If a root cannot be assessed, resolve access or obtain an explicit depth rather than guessing.
-
-Then run the scanner with the same -Config. Existing configurations remain valid and must not be overwritten. For a one-off request, pass scan overrides without modifying saved settings; an explicit -MaxDepth overrides per-root defaults. Use the default snapshots output directory if the user has no output preference. The compatibility entry drive-snapshot.ps1 -Init delegates to the same initializer.
-
-## Capture
-
-Keep generated data in its designated directory: snapshots and scan logs in `snapshots/`, assessment results in `assessments/`, visualization reports in `reports/`, and config backups in `backups/config/`. The active config stays at its configured location. For user-requested reinitialization, generate and validate a replacement first, then retain a uniquely named backup before replacing the active file. Do not move the active config away before a replacement succeeds. Archived configs containing relative paths must be restored to their original location before use. Never use `reports/` for backups or intermediate assessment data.
-
-Run from the repository root; substitute the user's actual paths:
+Use explicit roots when supplied. Otherwise, `wiztree-snapshot.ps1` may reuse `paths` and the
+global `maxDepth` viewing preference from `snapshot.config.json`. Do not guess a system drive.
+Do not overwrite configuration or existing snapshots.
 
 ```powershell
-# Capture with existing settings.
-./drive-snapshot.ps1
+# Explicit drives or folders.
+./wiztree-snapshot.ps1 -Target 'C:','D:'
 
-# One-off capture, preserving saved settings.
-./drive-snapshot.ps1 -Path 'D:\Projects' -MaxDepth 4
+# Reuse configured roots.
+./wiztree-snapshot.ps1
 
-# First-time setup when requested, followed by capture.
-./initialize-snapshots.ps1 -Path 'D:\Projects' -OutDirRoot 'snapshots'
-./drive-snapshot.ps1
+# Slow directory walk without the administrator/MFT fast path.
+./wiztree-snapshot.ps1 -Target 'D:\Projects' -NoAdmin
 
-# Explicitly requested Windows administrator scan.
-./drive-snapshot.ps1 -Path 'C:\' -Elevate
+# Convert an existing raw export without rescanning.
+./Convert-WizTreeCsv.ps1 -InputPath './snapshots/wiztree/raw/WizTree_example.csv'
 ```
 
-Use -Elevate when the user has requested or already authorized administrator scanning. Otherwise use ordinary permissions; for system roots, explain that -Elevate can improve coverage. Do not automatically retry a partial scan with elevation. Respect UAC cancellation and report child-process failure. Even administrator access cannot guarantee complete coverage. Do not change ACLs, ownership, or security settings to make a production scan succeed.
+WizTree requests administrator access by default for fast NTFS MFT scanning. Respect UAC
+cancellation and report whether the exporter fell back to non-admin scanning. Do not change
+ACLs, ownership, or security settings. A scan reads metadata and writes only its own output.
 
-Preserve the configured output exclusion and existing history. Wait for completion, using the available process/session mechanism for long scans; do not start duplicate scans because a tool yielded early. If interrupted or failed after some roots finish, distinguish completed roots from remaining ones.
+## Verification
 
-## Verify and deliver
+For every requested root:
 
-For each requested root, locate the CSV and matching log from this run. In an elevated invocation, the child's console output may not be visible: use the resolved output directory, run start time, and root row to identify new files rather than assuming success from a launch.
+1. Verify the raw CSV exists, has a stable nonzero size, a WizTree banner, a localized header,
+   and a first data row for the intended root.
+2. Verify the converted CSV has exactly one depth-0 row and inspect `Path`, `SizeBytes`,
+   `FileCount`, `Source`, and `Coverage`.
+3. Keep the raw and converted files in their designated Git-ignored directories. Import the
+   converted file into the viewer; never load a hundreds-of-megabytes raw file into a browser.
 
-Check that the CSV has exactly one depth-0 row for the intended root, inspect its SizeBytes, FileCount, and Incomplete, and read the log for read failures and privilege status. Do not treat a pre-existing file or a zero process exit alone as proof of a fresh capture. Report partial coverage as a lower bound, including failures below the reported depth; never describe inaccessible data as empty.
+WizTree exports recursive folder totals and recursive file/folder counts. Its CSV does not carry
+the built-in scanner's descendant read-failure propagation, so converted rows use
+`Coverage=Unknown`. Never present that state as proven complete. Missing paths are unobserved,
+not proven deleted, and recursive parent and child totals must not be summed.
 
-Return local links to the generated files and a concise completion/coverage summary for each root. Keep local inventory and configuration out of Git; verify ignore coverage for custom output locations inside the repository. Capture does not authorize deleting files, publishing inventories, or adding scheduled scans. If visualization was also requested, use the snapshot-report workflow with these exact output files.
+If the user explicitly requests the native scanner, follow its configuration, elevation,
+partial-coverage, CSV/log pairing, and root-row verification rules described in README.
